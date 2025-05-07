@@ -1,0 +1,34 @@
+--------------------Options--------------------
+Description: 
+N_c: 64
+N_dir_freq: 4
+N_f: 128
+N_xyz_freq: 15
+W: 256
+a_dim: 48
+batch_size: 1024
+beta_min: 0.1
+chunk: 4096
+ckpt_path: checkpoints/nerfw_epoch20.pth
+data_root_dir: ./data/Cambridge
+encode_a: True
+encode_t: True
+epochs: 20
+exp_name: my_experiment
+if_save_cache: True
+img_downscale: 3
+is_train: True
+lambda_u: 0.01
+last_epoch: 0
+layers: 8
+log_freq: 225
+lr: 0.0005
+num_gpus: 1
+perturb: 1.0
+root_dir: ./runs/nerf
+save_latest_freq: 1000
+scene: KingsCollege
+t_dim: 16
+use_cache: False
+use_disp: False
+--------------------End--------------------
