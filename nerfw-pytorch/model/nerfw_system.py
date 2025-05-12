@@ -160,7 +160,7 @@ class NeRFWSystem(nn.Module):
         3. 细采样sample_pdf
         4. fine model render, 计算fstatic_sigma,fstatic_rgb...
 
-        :param rays: (batch_size, 9), [position、direction、near、far、id]
+        :param rays: (batch_size, 16), [position(3), direction(3), near(1), far(1), id(1), lighting(7)]
         :param rays_rgb: (batch_size, 3), rgb
         :param cal_loss: True:计算loss(rays_rgb≠None), False:不计算loss
         :param custom_appearance_emb: 自定义appearance embedding
@@ -168,7 +168,14 @@ class NeRFWSystem(nn.Module):
         :return: res_c, res_f, losses: all dicts
         """
         n = len(rays)
-        rays_o, rays_d, near, far, ids = torch.split(rays, [3, 3, 1, 1, 1], dim=1)
+        # Verify input tensor shape
+        if rays.shape[1] != 16:
+            raise ValueError(f"Expected rays tensor with shape (batch_size, 16), but got shape {rays.shape}")
+
+        # Split rays into components - total 16 dimensions
+        split_sizes = [3, 3, 1, 1, 1, 7]  # position, direction, near, far, id, lighting
+        rays_o, rays_d, near, far, ids, lighting = torch.split(rays, split_sizes, dim=1)
+        ids = ids.long()  # Convert ids to Long type
         z = self.sample_uniform(near, far, self.N_c)  # sample coarse
 
         # obtain xyz, embedded xyz, dir for coarse model
@@ -178,8 +185,28 @@ class NeRFWSystem(nn.Module):
         xyz = rays_o + rays_d * z
         xyz_emb = self.pos_emb.embed(xyz.view(-1, 3))
         dir_emb = self.dir_emb.embed(rays_d.tile(1, self.N_c, 1).view(-1, 3))
+
+        # Add lighting to coarse model input
+        lighting_repeated = lighting.unsqueeze(1).repeat(1, self.N_c, 1).view(-1, 7)
+
         # coarse model forward
-        x = torch.hstack([xyz_emb, dir_emb])
+        if self.encode_a:
+            if custom_appearance_emb is None:
+                appearance_emb = self.appearance_embedding(ids).tile(1, self.N_c, 1).view(-1, self.a_dim)
+            else:
+                appearance_emb = custom_appearance_emb.view(1,-1).tile(n,self.N_c,1)
+        if self.encode_t and not test_time:
+            transient_emb = self.transient_embedding(ids).tile(1, self.N_c, 1).view(-1, self.t_dim)
+
+        # Construct input tensor in correct order: [xyz_emb, dir_emb, appearance_emb, transient_emb, lighting_emb]
+        x_components = [xyz_emb, dir_emb]
+        if self.encode_a:
+            x_components.append(appearance_emb)
+        if self.encode_t and not test_time:
+            x_components.append(transient_emb)
+        x_components.append(lighting_repeated)
+        x = torch.hstack(x_components)
+
         static_sigma, static_rgb = self.coarse_model.forward(x, flag=1)
         static_sigma, static_rgb = static_sigma.view(n, self.N_c), static_rgb.view(n, self.N_c, 3)
         _, weights, coarse_ray_rgb = self.render(torch.squeeze(z, -1), static_sigma, None, static_rgb)
@@ -195,17 +222,27 @@ class NeRFWSystem(nn.Module):
         xyz = rays_o + rays_d * torch.unsqueeze(all_z, -1)
         xyz_emb = self.pos_emb.embed(xyz.view(-1, 3))
         dir_emb = self.dir_emb.embed(rays_d.tile(1, N_all, 1).view(-1, 3))
+
+        # Add lighting to fine model input
+        lighting_repeated = lighting.unsqueeze(1).repeat(1, N_all, 1).view(-1, 7)
+
         ids = ids.long()
         if self.encode_a:
             if custom_appearance_emb is None:
                 appearance_emb = self.appearance_embedding(ids).tile(1, N_all, 1).view(-1, self.a_dim)
-            else: # custom appearance embedding:shape(a_dim,)
-                appearance_emb=custom_appearance_emb.view(1,-1).tile(n*N_all,1)
+            else:
+                appearance_emb = custom_appearance_emb.view(1,-1).tile(n*N_all,1)
         if self.encode_t and not test_time:
             transient_emb = self.transient_embedding(ids).tile(1, N_all, 1).view(-1, self.t_dim)
-        a_t_emb = ([] if not self.encode_a else [appearance_emb]) +\
-                  ([] if (not self.encode_t or test_time) else [transient_emb])
-        x = torch.hstack([xyz_emb, dir_emb] + a_t_emb)
+
+        # Construct input tensor in correct order: [xyz_emb, dir_emb, appearance_emb, transient_emb, lighting_emb]
+        x_components = [xyz_emb, dir_emb]
+        if self.encode_a:
+            x_components.append(appearance_emb)
+        if self.encode_t and not test_time:
+            x_components.append(transient_emb)
+        x_components.append(lighting_repeated)
+        x = torch.hstack(x_components)
 
         # fine model forward
         if self.encode_t and not test_time:   # forward
@@ -272,9 +309,14 @@ class NeRFWSystem(nn.Module):
         推理阶段即render一个whole img的所有rays, 这里即all_rays, rays的format和forward时一致。
         Input: rays
         Output: complete image
-        :param all_rays: [n_rays,9] [position、direction、near、far、id]
+        :param all_rays: [n_rays,16] [position(3), direction(3), near(1), far(1), id(1), lighting(7)]
         :param chunk: 一次render光线数目
-        :return:
+        :return: dict containing:
+            cc: coarse rgb output
+            fs: fine static rgb (if encode_t)
+            ft: fine transient rgb (if encode_t)
+            fc: final fine rgb output
+            z: depth values
         """
         coarse_ray_rgbs = []
         fine_static_ray_rgbs = []

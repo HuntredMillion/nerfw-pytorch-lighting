@@ -23,9 +23,7 @@ class NeRFW(nn.Module):
         self.a_dim = a_dim if encode_a else 0
         self.t_dim = t_dim if encode_t else 0
         self.res_layer = res_layer
-        self.device=device
-        # Add lighting embedding
-        # self.lighting_embedding = nn.Embedding(N_lighting_conditions, l_dim)
+        self.device = device
 
         # init nerf-w structures
         # θ1: obtain the voxel density, i.e σ.
