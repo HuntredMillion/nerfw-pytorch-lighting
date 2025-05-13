@@ -324,10 +324,16 @@ class NeRFWSystem(nn.Module):
         fine_ray_rgbs = []
         fine_z = []
         with torch.no_grad():
-            rays_num = len(all_rays)
+            rays_num = all_rays.shape[0]
             for i in range(0, rays_num, chunk):
-                rays = all_rays[i:i + chunk]
-                res_c, res_f, _ = self.forward(rays)
+                block = all_rays[i : i + chunk]
+                # slice out inputs: pos(3), dir(3), near(1), far(1), id(1), lighting(7)
+                rays_input = torch.cat([
+                    block[..., :9],      # pos, dir, near, far, id
+                    block[..., 12:19]    # lighting
+                ], dim=-1)               # → [M,16]
+                res_c, res_f, _ = self.forward(rays_input)
+
                 coarse_ray_rgbs += [res_c['ray_rgb']]
                 if self.encode_t:
                     fine_static_ray_rgbs += [res_f['static_ray_rgb']]
