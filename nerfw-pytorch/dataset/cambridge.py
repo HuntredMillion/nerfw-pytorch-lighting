@@ -25,6 +25,14 @@ class CambridgeDataset(Dataset):
         self.if_save_cache = if_save_cache
         self.view_lighting = {}  # Store lighting conditions for each view
         self.load_data()
+        self.view_dims = {}
+        for vid, fname in self.view_filename.items():
+            img_path = os.path.join(self.root_dir, self.scene, fname)
+            with Image.open(img_path) as img:
+                w0, h0 = img.size
+            # record the *downscaled* dims for this view
+            self.view_dims[vid] = (w0 // self.img_downscale,
+                                   h0 // self.img_downscale)
 
     def load_data(self):
         """
